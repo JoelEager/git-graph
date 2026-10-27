@@ -69,7 +69,7 @@
   <div id="legend" class="legend"></div>
   <div id="desc" class="desc"></div>
 </section>
-<div id="details" class="details"><span class="hint">Hover over the chart for details</span></div>
+<div id="details" class="details"><span class="hint">Hover over a bar to filter this list</span></div>
 <script>
 const DATA = __DATA__;
 const NS = "http://www.w3.org/2000/svg";
@@ -81,6 +81,8 @@ const pad = value => String(value).padStart(2, "0");
 const color = index => PALETTE[index % PALETTE.length];
 const control = id => document.getElementById(id);
 const sortDesc = entries => entries.sort((a, b) => b[1] - a[1]);
+const formatDate = seconds => new Date(seconds * 1000).toLocaleDateString(
+  "en-US", { year: "numeric", month: "short", day: "numeric" });
 
 function seriesKey(commit, stackBy) {
   return stackBy === "author" ? commit.author : DATA.repos[commit.repo];
@@ -134,6 +136,25 @@ function tickLabel(seconds, resolution, showYear) {
          (showYear ? yearSuffix : "");
 }
 
+function monthLabel(seconds) {
+  const date = new Date(seconds * 1000);
+  return MONTHS[date.getMonth()] + " '" + String(date.getFullYear()).slice(2);
+}
+
+function weekRangeLabel(seconds, showYear) {
+  const start = new Date(seconds * 1000);
+  const end = new Date(seconds * 1000);
+  end.setDate(end.getDate() + 6);
+  const yearStart = String(start.getFullYear()).slice(2);
+  const yearEnd = String(end.getFullYear()).slice(2);
+  const suffix = showYear || yearStart !== yearEnd;
+  const left = MONTHS[start.getMonth()] + " " + start.getDate() +
+               (suffix ? " '" + yearStart : "");
+  const right = MONTHS[end.getMonth()] + " " + end.getDate() +
+                (suffix ? " '" + yearEnd : "");
+  return `${left} – ${right}`;
+}
+
 function metricValue(commit, metric) {
   return metric === "lines" ? commit.added + commit.deleted : 1;
 }
@@ -142,6 +163,8 @@ function aggregate(resolution, stackBy, metric, commits, showYear) {
   const buckets = new Map();   // bucket seconds -> Map<series name, value>
   const totals = new Map();    // series name -> total
   const cross = new Map();     // `${bucket}|${name}` -> Map<other-dim name, value>
+  const crossTotals = new Map(); // series name -> Map<other-dim name, value>
+  let minTime = Infinity, maxTime = -Infinity;
   for (const commit of commits) {
     const name = seriesKey(commit, stackBy);
     const other = otherKey(commit, stackBy);
@@ -155,8 +178,14 @@ function aggregate(resolution, stackBy, metric, commits, showYear) {
     if (!cross.has(crossKey)) cross.set(crossKey, new Map());
     const crossValues = cross.get(crossKey);
     crossValues.set(other, (crossValues.get(other) || 0) + value);
+    if (!crossTotals.has(name)) crossTotals.set(name, new Map());
+    const totalValues = crossTotals.get(name);
+    totalValues.set(other, (totalValues.get(other) || 0) + value);
+    if (commit.time < minTime) minTime = commit.time;
+    if (commit.time > maxTime) maxTime = commit.time;
   }
-  const ranked = sortDesc([...totals.entries()]).map(([name]) => name);
+  const rankedPairs = sortDesc([...totals.entries()]);
+  const ranked = rankedPairs.map(([name]) => name);
   const series = ranked.slice(0, TOP_N);
   if (ranked.length > TOP_N) series.push("Other");
   const starts = [...buckets.keys()].sort((a, b) => a - b);
@@ -180,7 +209,12 @@ function aggregate(resolution, stackBy, metric, commits, showYear) {
         const crossValues = cross.get(bucket + "|" + name);
         if (crossValues) crossBySeries.set(name, sortDesc([...crossValues]));
       }
-      rows.push({ start: bucket, label: bucketLabel(bucket, resolution),
+      rows.push({ start: bucket,
+                  label: resolution === "week"
+                    ? weekRangeLabel(bucket, showYear)
+                    : resolution === "month"
+                      ? monthLabel(bucket)
+                      : bucketLabel(bucket, resolution),
                   tick: tickLabel(bucket, resolution, showYear), cells,
                   cross: crossBySeries,
                   other: series.includes("Other")
@@ -189,7 +223,22 @@ function aggregate(resolution, stackBy, metric, commits, showYear) {
                     : null,
                   total: cells.reduce((sum, value) => sum + value, 0) });
     }
-  return { series, rows };
+  const crossTotalsSorted = new Map();
+  for (const [name, values] of crossTotals)
+    crossTotalsSorted.set(name, sortDesc([...values]));
+  const summaryCells = series.map(name => name === "Other"
+    ? rankedPairs.slice(TOP_N).reduce((sum, [, value]) => sum + value, 0)
+    : (totals.get(name) || 0));
+  const summary = {
+    label: commits.length
+      ? `${formatDate(minTime)} – ${formatDate(maxTime)}`
+      : "All",
+    cells: summaryCells,
+    cross: crossTotalsSorted,
+    other: ranked.length > TOP_N ? rankedPairs.slice(TOP_N) : null,
+    total: summaryCells.reduce((sum, value) => sum + value, 0),
+  };
+  return { series, rows, summary };
 }
 
 function niceMax(value) {
@@ -228,12 +277,14 @@ function mutedSpan(breakdown) {
   return span;
 }
 
-function showDetails(details, row, series, metric) {
+function showDetails(details, row, series, metric, isBar) {
   details.innerHTML = "";
   const head = document.createElement("div");
-  head.className = "details-head";
-  head.textContent = `${row.label}: ${row.total.toLocaleString()} ` +
-    (metric === "lines" ? "lines changed" : "commits");
+  head.className = isBar ? "details-head" : "hint";
+  head.textContent = isBar
+    ? `${row.label}: ${row.total.toLocaleString()} ` +
+      (metric === "lines" ? "lines changed" : "commits")
+    : "Hover over a bar to filter this list";
   details.appendChild(head);
   const list = document.createElement("ul");
   series.forEach((name, index) => {
@@ -265,22 +316,20 @@ function showDetails(details, row, series, metric) {
   details.appendChild(list);
 }
 
-function resetDetails() {
-  control("details").innerHTML =
-    '<span class="hint">Hover over the chart for details</span>';
-}
-
 function render(resolution, stackBy, metric, commits, showYear) {
-  const { series, rows } =
+  const { series, rows, summary } =
     aggregate(resolution, stackBy, metric, commits, showYear);
   const host = control("chart");
   const legend = control("legend");
+  const details = control("details");
   host.innerHTML = ""; legend.innerHTML = "";
-  resetDetails();
   if (!rows.length) {
     host.innerHTML = '<div class="empty">No commits found</div>';
+    details.innerHTML =
+      '<span class="hint">No commits in this selection.</span>';
     return;
   }
+  showDetails(details, summary, series, metric, false);
   const width = Math.max(host.clientWidth, 320), height = 300;
   const margin = { left: 56, right: 12, top: 10, bottom: 30 };
   const plotWidth = width - margin.left - margin.right;
@@ -319,15 +368,15 @@ function render(resolution, stackBy, metric, commits, showYear) {
   svg.appendChild(svgEl("line", {
     x1: margin.left, x2: width - margin.right, y1: axisY, y2: axisY,
     stroke: "#999" }));
-  const details = control("details");
+  const showSummary = () => showDetails(details, summary, series, metric, false);
   svg.addEventListener("mousemove", event => {
     const bounds = svg.getBoundingClientRect();
     const graphX = (event.clientX - bounds.left) * width / bounds.width;
     const barIndex = Math.min(rows.length - 1, Math.max(0,
       Math.floor((graphX - margin.left) * rows.length / plotWidth)));
-    showDetails(details, rows[barIndex], series, metric);
+    showDetails(details, rows[barIndex], series, metric, true);
   });
-  svg.addEventListener("mouseleave", resetDetails);
+  svg.addEventListener("mouseleave", showSummary);
   host.appendChild(svg);
   series.forEach((name, index) => {
     const item = document.createElement("span");
@@ -362,8 +411,6 @@ function describe(commits) {
   const [topRepo, topRepoCount] = topEntry(byRepo);
   const [topAuthor, topAuthorCount] = topEntry(byAuthor);
   const timestamps = commits.map(commit => commit.time);
-  const formatDate = seconds => new Date(seconds * 1000).toLocaleDateString(
-    "en-US", { year: "numeric", month: "short", day: "numeric" });
   target.textContent =
     `${plural(commits.length, "commit")} by ${plural(authors.size, "author")} ` +
     `across ${plural(repos.size, "repository", "repositories")} ` +
