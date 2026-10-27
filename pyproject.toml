@@ -20,3 +20,6 @@ version = { attr = "git_graph.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["git_graph*"]
+
+[tool.setuptools.package-data]
+git_graph = ["*.html"]

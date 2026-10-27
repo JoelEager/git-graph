@@ -2,7 +2,7 @@
 
 A command line tool that recursively scans a directory for git repositories,
 collects the date, author, and line counts of every commit, and opens an
-interactive HTML report with stacked bar charts of the activity over time.
+interactive HTML report with a stacked bar chart of the activity over time.
 Vibe coded with [Devin](https://www.devin.ai/).
 
 No dependencies — uses only the Python standard library and the `git` CLI.

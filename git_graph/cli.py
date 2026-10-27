@@ -53,35 +53,36 @@ def main(argv=None) -> int:
     args = parse_args(argv)
 
     if not git_available():
-        print("error: 'git' was not found on PATH", file=sys.stderr)
+        print("Error: 'git' was not found on PATH", file=sys.stderr)
         return 2
 
     root = Path(args.path).resolve()
     if not root.is_dir():
-        print(f"error: not a directory: {root}", file=sys.stderr)
+        print(f"Error: not a directory: {root}", file=sys.stderr)
         return 2
 
     repos = sorted(find_repositories(root, max_depth=args.max_depth))
     if not repos:
-        print(f"no git repositories found under {root}")
+        print(f"No git repositories found under {root}")
         return 1
 
-    print(f"found {len(repos)} repositories under {root}:")
+    print(f"Found {len(repos)} repositories under {root}:")
     for repo in repos:
         print(f"  {repo}")
     if args.list:
         return 0
 
+    print("Collecting commits...")
     commits, warnings = collect(repos)
     for warning in warnings:
-        print(f"warning: {warning}", file=sys.stderr)
-    print(f"collected {len(commits)} commits")
+        print(f"Warning: {warning}", file=sys.stderr)
+    print(f"Collected {len(commits)} commits")
 
     output = args.output or default_output_path(root)
 
     html = build_html(commits, repos, root)
     write_report(html, output)
-    print(f"report written to {output}")
+    print(f"Report written to {output}")
 
     if not args.no_open:
         webbrowser.open(output.as_uri())
