@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterator, List, Optional, Tuple
 
-_GIT_LOG_FORMAT = "tformat:%x1e%aI%x1f%an"
+_GIT_LOG_FORMAT = "tformat:%x1e%aI%x1f%an%x1f%ae"
 _GIT_TIMEOUT = 300
 _GIT_MAX_WORKERS = 32
 
@@ -28,8 +28,10 @@ def git_available() -> bool:
 
 
 def iter_commits(repo_path: Path, author: Optional[str] = None,
-                 count_lines: bool = True) -> Iterator[Commit]:
+                 count_lines: bool = True,
+                 use_email: bool = False) -> Iterator[Commit]:
     """Yield a Commit for every commit reachable from any ref in the repo."""
+    author_index = 2 if use_email else 1
     command = [
         "git", "-C", str(repo_path), "log", "--all",
         f"--pretty={_GIT_LOG_FORMAT}",
@@ -51,7 +53,10 @@ def iter_commits(repo_path: Path, author: Optional[str] = None,
         if not record.strip():
             continue
         lines = record.splitlines()
-        date_text, _, author_name = lines[0].partition("\x1f")
+        fields = lines[0].split("\x1f")
+        date_text = fields[0]
+        author_field = (
+            fields[author_index] if len(fields) > author_index else "")
         added = deleted = 0
         for line in lines[1:]:
             fields = line.split("\t", 2)
@@ -62,7 +67,7 @@ def iter_commits(repo_path: Path, author: Optional[str] = None,
             deleted += int(fields[1]) if fields[1].isdigit() else 0
         yield Commit(
             repo=repo,
-            author=author_name.strip() or "unknown",
+            author=author_field.strip() or "unknown",
             timestamp=datetime.fromisoformat(date_text.strip()).timestamp(),
             added=added,
             deleted=deleted,
@@ -70,12 +75,13 @@ def iter_commits(repo_path: Path, author: Optional[str] = None,
 
 
 def _read_repo(repo: Path, author: Optional[str],
-               count_lines: bool) -> List[Commit]:
-    return list(iter_commits(repo, author, count_lines))
+               count_lines: bool, use_email: bool) -> List[Commit]:
+    return list(iter_commits(repo, author, count_lines, use_email))
 
 
 def collect(repos: List[Path], author: Optional[str] = None,
             count_lines: bool = True, workers: Optional[int] = None,
+            use_email: bool = False,
             progress: Optional[Callable[[int, int], None]] = None,
             ) -> Tuple[List[Commit], List[str]]:
     """Collect commits from every repo, returning (commits, warnings).
@@ -94,7 +100,8 @@ def collect(repos: List[Path], author: Optional[str] = None,
     limit = max(1, min(limit, total))
     with ThreadPoolExecutor(max_workers=limit) as pool:
         futures = {
-            pool.submit(_read_repo, repo, author, count_lines): repo
+            pool.submit(_read_repo, repo, author, count_lines,
+                        use_email): repo
             for repo in repos
         }
         for done, future in enumerate(as_completed(futures), 1):

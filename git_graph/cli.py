@@ -25,9 +25,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("-a", "--author", metavar="PATTERN",
                         help="only include commits whose author name or email "
                              "matches PATTERN (a git regex)")
+    parser.add_argument("-e", "--email", action="store_true",
+                        help="group commits by author email instead of name")
     parser.add_argument("--fast", action="store_true",
                         help="skip per-commit line counts for a faster scan")
-    parser.add_argument("-w", "--workers", type=int, default=None, metavar="N",
+    parser.add_argument("--workers", type=int, default=None, metavar="N",
                         help="scan at most N repositories in parallel "
                              "(default: up to 32, scaled to CPU count)")
     parser.add_argument("--format", choices=["html", "json", "csv"],
@@ -107,7 +109,7 @@ def main(argv=None) -> int:
 
     commits, warnings = collect(
         repos, author=args.author, count_lines=not args.fast,
-        workers=args.workers, progress=progress)
+        workers=args.workers, use_email=args.email, progress=progress)
     if progress:
         print(file=sys.stderr)
     for warning in warnings:

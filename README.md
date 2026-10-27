@@ -21,6 +21,7 @@ git-graph src vendor           # Scan multiple directories at once
 git-graph . --list             # List the repositories found
 git-graph . --max-depth 2      # Limit search depth
 git-graph . --author Joel      # Only commits whose author name/email matches
+git-graph . --email            # Group commits by author email, not name
 git-graph . --fast             # Skip line counts for a quicker scan
 git-graph . --workers 8        # Scan up to 8 repositories in parallel
 git-graph . --format json      # Print the raw commit data as JSON (or csv)
