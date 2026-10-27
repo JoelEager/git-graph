@@ -1,6 +1,7 @@
 """Render the collected commit data as a self-contained interactive HTML report."""
 
 import json
+from collections import Counter
 from datetime import datetime
 from importlib import resources
 from pathlib import Path
@@ -18,14 +19,14 @@ def _template() -> str:
 
 
 def build_html(commits: List[Commit], repos: List[Path], root: Path) -> str:
-    resolved = [str(p.resolve()) for p in repos]
-    index = {p: i for i, p in enumerate(resolved)}
-    names = [Path(p).name for p in resolved]
+    resolved = [str(path.resolve()) for path in repos]
+    index = {path: i for i, path in enumerate(resolved)}
+    names = [Path(path).name for path in resolved]
     # Disambiguate repos that share a directory name.
-    dupes = {n for n in names if names.count(n) > 1}
+    counts = Counter(names)
     display = [
-        str(Path(p).parent.name + "/" + Path(p).name) if n in dupes else n
-        for p, n in zip(resolved, names)
+        str(Path(path).parent.name + "/" + name) if counts[name] > 1 else name
+        for path, name in zip(resolved, names)
     ]
     payload = {
         "root": str(root),
@@ -33,13 +34,13 @@ def build_html(commits: List[Commit], repos: List[Path], root: Path) -> str:
         "repos": display,
         "commits": [
             {
-                "r": index[c.repo],
-                "a": c.author,
-                "t": round(c.timestamp),
-                "p": c.added,
-                "m": c.deleted,
+                "repo": index[commit.repo],
+                "author": commit.author,
+                "time": round(commit.timestamp),
+                "added": commit.added,
+                "deleted": commit.deleted,
             }
-            for c in commits
+            for commit in commits
         ],
     }
     data = json.dumps(payload, separators=(",", ":"))

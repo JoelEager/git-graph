@@ -19,14 +19,6 @@ class Commit:
     added: int
     deleted: int
 
-    @property
-    def repo_name(self) -> str:
-        return Path(self.repo).name
-
-    @property
-    def lines_changed(self) -> int:
-        return self.added + self.deleted
-
 
 def git_available() -> bool:
     return shutil.which("git") is not None
@@ -34,7 +26,7 @@ def git_available() -> bool:
 
 def iter_commits(repo_path: Path) -> Iterator[Commit]:
     """Yield a Commit for every commit reachable from any ref in the repo."""
-    proc = subprocess.run(
+    result = subprocess.run(
         [
             "git", "-C", str(repo_path), "log", "--all",
             f"--pretty={_GIT_LOG_FORMAT}", "--numstat",
@@ -42,15 +34,15 @@ def iter_commits(repo_path: Path) -> Iterator[Commit]:
         capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=_GIT_TIMEOUT,
     )
-    if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip() or "git log failed")
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "git log failed")
 
     repo = str(repo_path.resolve())
-    for record in proc.stdout.split("\x1e"):
+    for record in result.stdout.split("\x1e"):
         if not record.strip():
             continue
         lines = record.splitlines()
-        date_s, _, author = lines[0].partition("\x1f")
+        date_text, _, author = lines[0].partition("\x1f")
         added = deleted = 0
         for line in lines[1:]:
             fields = line.split("\t", 2)
@@ -62,17 +54,17 @@ def iter_commits(repo_path: Path) -> Iterator[Commit]:
         yield Commit(
             repo=repo,
             author=author.strip() or "unknown",
-            timestamp=datetime.fromisoformat(date_s.strip()).timestamp(),
+            timestamp=datetime.fromisoformat(date_text.strip()).timestamp(),
             added=added,
             deleted=deleted,
         )
 
 
-def collect(root_repos: List[Path]) -> Tuple[List[Commit], List[str]]:
+def collect(repos: List[Path]) -> Tuple[List[Commit], List[str]]:
     """Collect commits from every repo, returning (commits, warnings)."""
     commits: List[Commit] = []
     warnings: List[str] = []
-    for repo in root_repos:
+    for repo in repos:
         try:
             commits.extend(iter_commits(repo))
         except (RuntimeError, subprocess.SubprocessError) as exc:

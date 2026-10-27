@@ -13,23 +13,23 @@ from git_graph.report import build_html, write_report
 
 
 def parse_args(argv=None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(
         prog="git-graph",
         description="Recursively find git repositories and visualize their "
                     "commit activity as stacked bar charts.",
     )
-    p.add_argument("path", nargs="?", default=".",
-                   help="directory to scan (default: current directory)")
-    p.add_argument("--max-depth", type=int, default=None, metavar="N",
-                   help="limit how deep to search for repositories")
-    p.add_argument("-o", "--output", type=Path, default=None,
-                   help="write the HTML report to this path (default: "
-                        "output/<scanned-dir>-<date>-<seq>.html)")
-    p.add_argument("--no-open", action="store_true",
-                   help="don't open the report in a browser")
-    p.add_argument("--list", action="store_true",
-                   help="just list the repositories found, then exit")
-    return p.parse_args(argv)
+    parser.add_argument("path", nargs="?", default=".",
+                        help="directory to scan (default: current directory)")
+    parser.add_argument("--max-depth", type=int, default=None, metavar="N",
+                        help="limit how deep to search for repositories")
+    parser.add_argument("-o", "--output", type=Path, default=None,
+                        help="write the HTML report to this path (default: "
+                             "output/<scanned-dir>-<date>-<seq>.html)")
+    parser.add_argument("--no-open", action="store_true",
+                        help="don't open the report in a browser")
+    parser.add_argument("--list", action="store_true",
+                        help="just list the repositories found, then exit")
+    return parser.parse_args(argv)
 
 
 # Repo root: git_graph/cli.py -> ..

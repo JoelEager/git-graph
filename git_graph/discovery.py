@@ -24,8 +24,9 @@ def find_repositories(root: Path, max_depth: Optional[int] = None) -> Iterator[P
         try:
             with os.scandir(path) as entries:
                 children = [
-                    e for e in entries
-                    if e.name != ".git" and e.is_dir(follow_symlinks=False)
+                    entry for entry in entries
+                    if entry.name != ".git"
+                    and entry.is_dir(follow_symlinks=False)
                 ]
         except OSError:
             continue

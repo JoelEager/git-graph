@@ -76,129 +76,155 @@ const PALETTE = ["#4e79a7","#f28e2b","#e15759","#76b7b2","#59a14f","#edc948",
                  "#b07aa1","#ff9da7","#9c755f","#bab0ac","#8cd17d","#86bcb6"];
 const TOP_N = 10;
 
-const pad = n => String(n).padStart(2, "0");
+const pad = value => String(value).padStart(2, "0");
+const color = index => PALETTE[index % PALETTE.length];
+const control = id => document.getElementById(id);
+const sortDesc = entries => entries.sort((a, b) => b[1] - a[1]);
 
-function bucketStart(sec, res) {
-  const d = new Date(sec * 1000);
-  if (res === "year")  return new Date(d.getFullYear(), 0, 1).getTime() / 1000;
-  if (res === "month") return new Date(d.getFullYear(), d.getMonth(), 1).getTime() / 1000;
-  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+function seriesKey(commit, stackBy) {
+  return stackBy === "author" ? commit.author : DATA.repos[commit.repo];
+}
+
+function otherKey(commit, stackBy) {
+  return stackBy === "author" ? DATA.repos[commit.repo] : commit.author;
+}
+
+function bucketStart(seconds, resolution) {
+  const date = new Date(seconds * 1000);
+  if (resolution === "year")
+    return new Date(date.getFullYear(), 0, 1).getTime() / 1000;
+  if (resolution === "month")
+    return new Date(date.getFullYear(), date.getMonth(), 1).getTime() / 1000;
+  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   day.setDate(day.getDate() - ((day.getDay() + 6) % 7)); // ISO week starts Monday
   return day.getTime() / 1000;
 }
 
-function nextBucket(sec, res) {
-  const d = new Date(sec * 1000);
-  if (res === "year")  return new Date(d.getFullYear() + 1, 0, 1).getTime() / 1000;
-  if (res === "month") return new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime() / 1000;
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7).getTime() / 1000;
+function nextBucket(seconds, resolution) {
+  const date = new Date(seconds * 1000);
+  if (resolution === "year")
+    return new Date(date.getFullYear() + 1, 0, 1).getTime() / 1000;
+  if (resolution === "month")
+    return new Date(date.getFullYear(), date.getMonth() + 1, 1).getTime() / 1000;
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 7)
+    .getTime() / 1000;
 }
 
-function bucketLabel(sec, res) {
-  const d = new Date(sec * 1000);
-  if (res === "year")  return String(d.getFullYear());
-  if (res === "month") return d.getFullYear() + "-" + pad(d.getMonth() + 1);
-  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+function bucketLabel(seconds, resolution) {
+  const date = new Date(seconds * 1000);
+  if (resolution === "year") return String(date.getFullYear());
+  if (resolution === "month")
+    return date.getFullYear() + "-" + pad(date.getMonth() + 1);
+  return date.getFullYear() + "-" + pad(date.getMonth() + 1) +
+         "-" + pad(date.getDate());
 }
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun",
                 "Jul","Aug","Sep","Oct","Nov","Dec"];
 
-function tickLabel(sec, res, showYear) {
-  const d = new Date(sec * 1000);
-  const yr = " '" + String(d.getFullYear()).slice(2);
-  if (res === "year") return String(d.getFullYear());
-  if (res === "month")
-    return MONTHS[d.getMonth()] + (showYear || d.getMonth() === 0 ? yr : "");
-  return MONTHS[d.getMonth()] + " " + d.getDate() + (showYear ? yr : "");
+function tickLabel(seconds, resolution, showYear) {
+  const date = new Date(seconds * 1000);
+  const yearSuffix = " '" + String(date.getFullYear()).slice(2);
+  if (resolution === "year") return String(date.getFullYear());
+  if (resolution === "month")
+    return MONTHS[date.getMonth()] +
+      (showYear || date.getMonth() === 0 ? yearSuffix : "");
+  return MONTHS[date.getMonth()] + " " + date.getDate() +
+         (showYear ? yearSuffix : "");
 }
 
-function metricValue(c, metric) {
-  return metric === "lines" ? c.p + c.m : 1;
+function metricValue(commit, metric) {
+  return metric === "lines" ? commit.added + commit.deleted : 1;
 }
 
-function aggregate(res, stackBy, metric, commits, showYear) {
-  const buckets = new Map();   // startSec -> Map<series, value>
-  const totals = new Map();    // series -> total
-  const cross = new Map();     // `${b}|${key}` -> Map<other-dim key, value>
-  for (const c of commits) {
-    const key = stackBy === "author" ? c.a : DATA.repos[c.r];
-    const okey = stackBy === "author" ? DATA.repos[c.r] : c.a;
-    const b = bucketStart(c.t, res);
-    if (!buckets.has(b)) buckets.set(b, new Map());
-    const m = buckets.get(b);
-    const v = metricValue(c, metric);
-    m.set(key, (m.get(key) || 0) + v);
-    totals.set(key, (totals.get(key) || 0) + v);
-    const ck = b + "|" + key;
-    if (!cross.has(ck)) cross.set(ck, new Map());
-    const cm = cross.get(ck);
-    cm.set(okey, (cm.get(okey) || 0) + v);
+function aggregate(resolution, stackBy, metric, commits, showYear) {
+  const buckets = new Map();   // bucket seconds -> Map<series name, value>
+  const totals = new Map();    // series name -> total
+  const cross = new Map();     // `${bucket}|${name}` -> Map<other-dim name, value>
+  for (const commit of commits) {
+    const name = seriesKey(commit, stackBy);
+    const other = otherKey(commit, stackBy);
+    const bucket = bucketStart(commit.time, resolution);
+    if (!buckets.has(bucket)) buckets.set(bucket, new Map());
+    const bucketValues = buckets.get(bucket);
+    const value = metricValue(commit, metric);
+    bucketValues.set(name, (bucketValues.get(name) || 0) + value);
+    totals.set(name, (totals.get(name) || 0) + value);
+    const crossKey = bucket + "|" + name;
+    if (!cross.has(crossKey)) cross.set(crossKey, new Map());
+    const crossValues = cross.get(crossKey);
+    crossValues.set(other, (crossValues.get(other) || 0) + value);
   }
-  const ordered = [...totals.entries()].sort((x, y) => y[1] - x[1]).map(e => e[0]);
-  const series = ordered.slice(0, TOP_N);
-  if (ordered.length > TOP_N) series.push("Other");
+  const ranked = sortDesc([...totals.entries()]).map(([name]) => name);
+  const series = ranked.slice(0, TOP_N);
+  if (ranked.length > TOP_N) series.push("Other");
   const starts = [...buckets.keys()].sort((a, b) => a - b);
   const rows = [];
   if (starts.length)
-    for (let b = starts[0]; b <= starts[starts.length - 1]; b = nextBucket(b, res)) {
-      const m = buckets.get(b) || new Map();
-      const cells = series.map(s => {
-        if (s === "Other") {
-          let v = 0;
-          for (const [k, n] of m) if (!series.includes(k)) v += n;
-          return v;
+    for (let bucket = starts[0];
+         bucket <= starts[starts.length - 1];
+         bucket = nextBucket(bucket, resolution)) {
+      const bucketValues = buckets.get(bucket) || new Map();
+      const cells = series.map(name => {
+        if (name === "Other") {
+          let sum = 0;
+          for (const [key, count] of bucketValues)
+            if (!series.includes(key)) sum += count;
+          return sum;
         }
-        return m.get(s) || 0;
+        return bucketValues.get(name) || 0;
       });
-      const crow = new Map();
-      for (const k of m.keys()) {
-        const cm = cross.get(b + "|" + k);
-        if (cm) crow.set(k, [...cm.entries()].sort((a, b) => b[1] - a[1]));
+      const crossBySeries = new Map();
+      for (const name of bucketValues.keys()) {
+        const crossValues = cross.get(bucket + "|" + name);
+        if (crossValues) crossBySeries.set(name, sortDesc([...crossValues]));
       }
-      rows.push({ start: b, label: bucketLabel(b, res),
-                  tick: tickLabel(b, res, showYear), cells, cross: crow,
+      rows.push({ start: bucket, label: bucketLabel(bucket, resolution),
+                  tick: tickLabel(bucket, resolution, showYear), cells,
+                  cross: crossBySeries,
                   other: series.includes("Other")
-                    ? [...m.entries()]
-                        .filter(([k]) => !series.includes(k))
-                        .sort((a, b) => b[1] - a[1])
+                    ? sortDesc([...bucketValues]
+                        .filter(([name]) => !series.includes(name)))
                     : null,
-                  total: cells.reduce((a, x) => a + x, 0) });
+                  total: cells.reduce((sum, value) => sum + value, 0) });
     }
   return { series, rows };
 }
 
-function niceMax(v) {
-  if (v <= 0) return 1;
-  const pow = Math.pow(10, Math.floor(Math.log10(v)));
-  for (const f of [1, 2, 2.5, 5, 10]) if (v <= f * pow) return f * pow;
-  return 10 * pow;
+function niceMax(value) {
+  if (value <= 0) return 1;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(value)));
+  for (const factor of [1, 2, 2.5, 5, 10])
+    if (value <= factor * magnitude) return factor * magnitude;
+  return 10 * magnitude;
 }
 
-function el(name, attrs) {
-  const e = document.createElementNS(NS, name);
-  for (const k in attrs) e.setAttribute(k, attrs[k]);
-  return e;
+function svgEl(name, attrs) {
+  const element = document.createElementNS(NS, name);
+  for (const attr in attrs) element.setAttribute(attr, attrs[attr]);
+  return element;
 }
 
 function textEl(x, y, str, attrs) {
-  const t = el("text", Object.assign({ x, y, "font-size": 11, fill: "#555" }, attrs));
-  t.textContent = str;
-  return t;
+  const text = svgEl("text", Object.assign(
+    { x, y, "font-size": 11, fill: "#555" }, attrs));
+  text.textContent = str;
+  return text;
 }
 
-function fmt(n) {
-  if (n >= 1e6) return (n / 1e6).toFixed(n % 1e6 ? 1 : 0) + "M";
-  if (n >= 1e4) return (n / 1e3).toFixed(n % 1e3 ? 1 : 0) + "k";
-  return String(Math.round(n * 100) / 100);
+function formatNumber(value) {
+  if (value >= 1e6) return (value / 1e6).toFixed(value % 1e6 ? 1 : 0) + "M";
+  if (value >= 1e4) return (value / 1e3).toFixed(value % 1e3 ? 1 : 0) + "k";
+  return String(Math.round(value * 100) / 100);
 }
 
-function mutedSpan(pairs) {
-  const sp = document.createElement("span");
-  sp.className = "muted";
-  sp.textContent = " (" +
-    pairs.map(([n, v]) => `${n}: ${v.toLocaleString()}`).join(", ") + ")";
-  return sp;
+function mutedSpan(breakdown) {
+  const span = document.createElement("span");
+  span.className = "muted";
+  span.textContent = " (" + breakdown
+    .map(([name, count]) => `${name}: ${count.toLocaleString()}`)
+    .join(", ") + ")";
+  return span;
 }
 
 function showDetails(details, row, series, metric) {
@@ -208,172 +234,190 @@ function showDetails(details, row, series, metric) {
   head.textContent = `${row.label}: ${row.total.toLocaleString()} ` +
     (metric === "lines" ? "lines changed" : "commits");
   details.appendChild(head);
-  const ul = document.createElement("ul");
-  series.forEach((s, i) => {
-    const v = row.cells[i];
-    if (!v) return;
+  const list = document.createElement("ul");
+  series.forEach((name, index) => {
+    const value = row.cells[index];
+    if (!value) return;
     const item = document.createElement("li");
-    const sw = document.createElement("i");
-    sw.style.background = PALETTE[i % PALETTE.length];
-    item.appendChild(sw);
-    item.appendChild(document.createTextNode(`${s}: ${v.toLocaleString()}`));
-    const cx = row.cross.get(s);
-    if (cx && cx.length) item.appendChild(mutedSpan(cx));
-    if (s === "Other" && row.other) {
-      const sub = document.createElement("ul");
-      for (const [name, n] of row.other) {
-        const li = document.createElement("li");
-        li.appendChild(document.createTextNode(`${name}: ${n.toLocaleString()}`));
-        const scx = row.cross.get(name);
-        if (scx && scx.length) li.appendChild(mutedSpan(scx));
-        sub.appendChild(li);
+    const swatch = document.createElement("i");
+    swatch.style.background = color(index);
+    item.appendChild(swatch);
+    item.appendChild(
+      document.createTextNode(`${name}: ${value.toLocaleString()}`));
+    const breakdown = row.cross.get(name);
+    if (breakdown && breakdown.length) item.appendChild(mutedSpan(breakdown));
+    if (name === "Other" && row.other) {
+      const subList = document.createElement("ul");
+      for (const [otherName, count] of row.other) {
+        const subItem = document.createElement("li");
+        subItem.appendChild(
+          document.createTextNode(`${otherName}: ${count.toLocaleString()}`));
+        const subBreakdown = row.cross.get(otherName);
+        if (subBreakdown && subBreakdown.length)
+          subItem.appendChild(mutedSpan(subBreakdown));
+        subList.appendChild(subItem);
       }
-      item.appendChild(sub);
+      item.appendChild(subList);
     }
-    ul.appendChild(item);
+    list.appendChild(item);
   });
-  details.appendChild(ul);
+  details.appendChild(list);
 }
 
 function resetDetails() {
-  document.getElementById("details").innerHTML =
+  control("details").innerHTML =
     '<span class="hint">Hover over the chart for details</span>';
 }
 
-function render(res, stackBy, metric, commits, showYear) {
-  const { series, rows } = aggregate(res, stackBy, metric, commits, showYear);
-  const host = document.getElementById("chart");
-  const legend = document.getElementById("legend");
+function render(resolution, stackBy, metric, commits, showYear) {
+  const { series, rows } =
+    aggregate(resolution, stackBy, metric, commits, showYear);
+  const host = control("chart");
+  const legend = control("legend");
   host.innerHTML = ""; legend.innerHTML = "";
   resetDetails();
   if (!rows.length) {
     host.innerHTML = '<div class="empty">No commits found</div>';
     return;
   }
-  const W = Math.max(host.clientWidth, 320), H = 300;
-  const m = { l: 56, r: 12, t: 10, b: 30 };
-  const pw = W - m.l - m.r, ph = H - m.t - m.b;
-  const yMax = niceMax(Math.max(...rows.map(r => r.total)));
-  const bw = Math.max((pw / rows.length) * 0.72, 1.5);
-  const svg = el("svg", { viewBox: `0 0 ${W} ${H}` });
+  const width = Math.max(host.clientWidth, 320), height = 300;
+  const margin = { left: 56, right: 12, top: 10, bottom: 30 };
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const axisY = margin.top + plotHeight;
+  const maxValue = niceMax(Math.max(...rows.map(row => row.total)));
+  const barWidth = Math.max((plotWidth / rows.length) * 0.72, 1.5);
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}` });
 
   for (let i = 0; i <= 4; i++) {
-    const v = yMax * i / 4, y = m.t + ph - ph * i / 4;
-    svg.appendChild(el("line", { x1: m.l, x2: W - m.r, y1: y, y2: y,
-                                 stroke: "#e6e6e6" }));
-    svg.appendChild(textEl(m.l - 6, y + 4, fmt(v), { "text-anchor": "end" }));
+    const gridValue = maxValue * i / 4;
+    const gridY = axisY - plotHeight * i / 4;
+    svg.appendChild(svgEl("line", {
+      x1: margin.left, x2: width - margin.right, y1: gridY, y2: gridY,
+      stroke: "#e6e6e6" }));
+    svg.appendChild(textEl(margin.left - 6, gridY + 4, formatNumber(gridValue),
+      { "text-anchor": "end" }));
   }
-  const step = Math.ceil(rows.length / 12);
-  rows.forEach((row, i) => {
-    const x = m.l + pw * (i + 0.5) / rows.length;
-    let y = m.t + ph;
-    series.forEach((s, si) => {
-      const v = row.cells[si];
-      if (!v) return;
-      const h = ph * v / yMax;
-      y -= h;
-      const r = el("rect", { x: x - bw / 2, y, width: bw, height: h,
-                             fill: PALETTE[si % PALETTE.length] });
-      svg.appendChild(r);
+  const labelStep = Math.ceil(rows.length / 12);
+  rows.forEach((row, index) => {
+    const x = margin.left + plotWidth * (index + 0.5) / rows.length;
+    let y = axisY;
+    series.forEach((name, seriesIndex) => {
+      const value = row.cells[seriesIndex];
+      if (!value) return;
+      const barHeight = plotHeight * value / maxValue;
+      y -= barHeight;
+      svg.appendChild(svgEl("rect", {
+        x: x - barWidth / 2, y, width: barWidth, height: barHeight,
+        fill: color(seriesIndex) }));
     });
-    if (i % step === 0)
-      svg.appendChild(textEl(x, m.t + ph + 16, row.tick,
+    if (index % labelStep === 0)
+      svg.appendChild(textEl(x, axisY + 16, row.tick,
         { "text-anchor": "middle" }));
   });
-  svg.appendChild(el("line", { x1: m.l, x2: W - m.r, y1: m.t + ph, y2: m.t + ph,
-                               stroke: "#999" }));
-  const details = document.getElementById("details");
-  svg.addEventListener("mousemove", e => {
-    const rect = svg.getBoundingClientRect();
-    const vx = (e.clientX - rect.left) * W / rect.width;
-    const i = Math.min(rows.length - 1,
-      Math.max(0, Math.floor((vx - m.l) * rows.length / pw)));
-    showDetails(details, rows[i], series, metric);
+  svg.appendChild(svgEl("line", {
+    x1: margin.left, x2: width - margin.right, y1: axisY, y2: axisY,
+    stroke: "#999" }));
+  const details = control("details");
+  svg.addEventListener("mousemove", event => {
+    const bounds = svg.getBoundingClientRect();
+    const graphX = (event.clientX - bounds.left) * width / bounds.width;
+    const barIndex = Math.min(rows.length - 1, Math.max(0,
+      Math.floor((graphX - margin.left) * rows.length / plotWidth)));
+    showDetails(details, rows[barIndex], series, metric);
   });
   svg.addEventListener("mouseleave", resetDetails);
   host.appendChild(svg);
-  series.forEach((s, i) => {
+  series.forEach((name, index) => {
     const item = document.createElement("span");
-    const sw = document.createElement("i");
-    sw.style.background = PALETTE[i % PALETTE.length];
-    item.appendChild(sw);
-    item.appendChild(document.createTextNode(s));
+    const swatch = document.createElement("i");
+    swatch.style.background = color(index);
+    item.appendChild(swatch);
+    item.appendChild(document.createTextNode(name));
     legend.appendChild(item);
   });
 }
 
-function plural(n, singular, p) {
-  return `${n} ${n === 1 ? singular : (p || singular + "s")}`;
+function plural(count, singular, pluralForm) {
+  return `${count} ${count === 1 ? singular : (pluralForm || singular + "s")}`;
 }
 
 function describe(commits) {
-  const el = document.getElementById("desc");
+  const target = control("desc");
   if (!commits.length) {
-    el.textContent = "No commits in this selection.";
+    target.textContent = "No commits in this selection.";
     return;
   }
-  const authors = new Set(commits.map(c => c.a));
-  const repos = new Set(commits.map(c => c.r));
+  const authors = new Set(commits.map(commit => commit.author));
+  const repos = new Set(commits.map(commit => commit.repo));
   const byRepo = new Map(), byAuthor = new Map();
   let added = 0, deleted = 0;
-  for (const c of commits) {
-    byRepo.set(c.r, (byRepo.get(c.r) || 0) + 1);
-    byAuthor.set(c.a, (byAuthor.get(c.a) || 0) + 1);
-    added += c.p; deleted += c.m;
+  for (const commit of commits) {
+    byRepo.set(commit.repo, (byRepo.get(commit.repo) || 0) + 1);
+    byAuthor.set(commit.author, (byAuthor.get(commit.author) || 0) + 1);
+    added += commit.added; deleted += commit.deleted;
   }
-  const top = m => [...m.entries()].sort((a, b) => b[1] - a[1])[0];
-  const [ri, rn] = top(byRepo);
-  const [an, ac] = top(byAuthor);
-  const ts = commits.map(c => c.t);
-  const fd = t => new Date(t * 1000).toLocaleDateString(
+  const topEntry = counts => sortDesc([...counts.entries()])[0];
+  const [topRepo, topRepoCount] = topEntry(byRepo);
+  const [topAuthor, topAuthorCount] = topEntry(byAuthor);
+  const timestamps = commits.map(commit => commit.time);
+  const formatDate = seconds => new Date(seconds * 1000).toLocaleDateString(
     "en-US", { year: "numeric", month: "short", day: "numeric" });
-  el.textContent =
+  target.textContent =
     `${plural(commits.length, "commit")} by ${plural(authors.size, "author")} ` +
     `across ${plural(repos.size, "repository", "repositories")} ` +
-    `between ${fd(Math.min(...ts))} and ${fd(Math.max(...ts))}, ` +
-    `changing ${fmt(added + deleted)} ${added + deleted === 1 ? "line" : "lines"} ` +
-    `(+${fmt(added)} / -${fmt(deleted)}). ` +
-    `Most active repository: ${DATA.repos[ri]} (${plural(rn, "commit")}). ` +
-    `Top author: ${an} (${plural(ac, "commit")}).`;
+    `between ${formatDate(Math.min(...timestamps))} ` +
+    `and ${formatDate(Math.max(...timestamps))}, ` +
+    `changing ${formatNumber(added + deleted)} ` +
+    `${added + deleted === 1 ? "line" : "lines"} ` +
+    `(+${formatNumber(added)} / -${formatNumber(deleted)}). ` +
+    `Most active repository: ${DATA.repos[topRepo]} ` +
+    `(${plural(topRepoCount, "commit")}). ` +
+    `Top author: ${topAuthor} (${plural(topAuthorCount, "commit")}).`;
 }
 
 function selectedCommits() {
-  const year = document.getElementById("year").value;
+  const year = control("year").value;
   if (year === "all") return DATA.commits;
-  const y = Number(year);
-  return DATA.commits.filter(c => new Date(c.t * 1000).getFullYear() === y);
+  const yearNumber = Number(year);
+  return DATA.commits.filter(
+    commit => new Date(commit.time * 1000).getFullYear() === yearNumber);
 }
 
 function refresh() {
   const commits = selectedCommits();
-  render(document.getElementById("res").value,
-         document.getElementById("stack").value,
-         document.getElementById("metric").value,
+  render(control("res").value,
+         control("stack").value,
+         control("metric").value,
          commits,
-         document.getElementById("year").value === "all");
+         control("year").value === "all");
   describe(commits);
 }
 
 const baseName = DATA.root.split(/[\\/]/).filter(Boolean).pop() || "root";
 document.title = `${baseName.replace(/:$/, "")} - Git Graph`;
 
-document.getElementById("summary").textContent =
+control("summary").textContent =
   `Scanned ${DATA.root} · Generated ${DATA.generated}`;
 
-const yearSel = document.getElementById("year");
-const years = [...new Set(DATA.commits.map(c => new Date(c.t * 1000).getFullYear()))]
+const yearSelect = control("year");
+const years = [...new Set(
+    DATA.commits.map(commit => new Date(commit.time * 1000).getFullYear()))]
   .sort((a, b) => b - a);
-for (const y of years) {
-  const opt = document.createElement("option");
-  opt.value = String(y);
-  opt.textContent = String(y);
-  yearSel.appendChild(opt);
+for (const year of years) {
+  const option = document.createElement("option");
+  option.value = String(year);
+  option.textContent = String(year);
+  yearSelect.appendChild(option);
 }
 
 for (const id of ["res", "stack", "metric", "year"])
-  document.getElementById(id).addEventListener("change", refresh);
-let rt;
-window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(refresh, 150); });
+  control(id).addEventListener("change", refresh);
+let resizeTimer;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(refresh, 150);
+});
 refresh();
 </script>
 </body>
