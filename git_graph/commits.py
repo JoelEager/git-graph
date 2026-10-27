@@ -1,14 +1,17 @@
 """Collect commit metadata from git repositories."""
 
+import os
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterator, List, Tuple
+from typing import Callable, Iterator, List, Optional, Tuple
 
 _GIT_LOG_FORMAT = "tformat:%x1e%aI%x1f%an"
 _GIT_TIMEOUT = 300
+_GIT_MAX_WORKERS = 32
 
 
 @dataclass
@@ -24,13 +27,19 @@ def git_available() -> bool:
     return shutil.which("git") is not None
 
 
-def iter_commits(repo_path: Path) -> Iterator[Commit]:
+def iter_commits(repo_path: Path, author: Optional[str] = None,
+                 count_lines: bool = True) -> Iterator[Commit]:
     """Yield a Commit for every commit reachable from any ref in the repo."""
+    command = [
+        "git", "-C", str(repo_path), "log", "--all",
+        f"--pretty={_GIT_LOG_FORMAT}",
+    ]
+    if author:
+        command.append(f"--author={author}")
+    if count_lines:
+        command.append("--numstat")
     result = subprocess.run(
-        [
-            "git", "-C", str(repo_path), "log", "--all",
-            f"--pretty={_GIT_LOG_FORMAT}", "--numstat",
-        ],
+        command,
         capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=_GIT_TIMEOUT,
     )
@@ -42,7 +51,7 @@ def iter_commits(repo_path: Path) -> Iterator[Commit]:
         if not record.strip():
             continue
         lines = record.splitlines()
-        date_text, _, author = lines[0].partition("\x1f")
+        date_text, _, author_name = lines[0].partition("\x1f")
         added = deleted = 0
         for line in lines[1:]:
             fields = line.split("\t", 2)
@@ -53,20 +62,47 @@ def iter_commits(repo_path: Path) -> Iterator[Commit]:
             deleted += int(fields[1]) if fields[1].isdigit() else 0
         yield Commit(
             repo=repo,
-            author=author.strip() or "unknown",
+            author=author_name.strip() or "unknown",
             timestamp=datetime.fromisoformat(date_text.strip()).timestamp(),
             added=added,
             deleted=deleted,
         )
 
 
-def collect(repos: List[Path]) -> Tuple[List[Commit], List[str]]:
-    """Collect commits from every repo, returning (commits, warnings)."""
+def _read_repo(repo: Path, author: Optional[str],
+               count_lines: bool) -> List[Commit]:
+    return list(iter_commits(repo, author, count_lines))
+
+
+def collect(repos: List[Path], author: Optional[str] = None,
+            count_lines: bool = True, workers: Optional[int] = None,
+            progress: Optional[Callable[[int, int], None]] = None,
+            ) -> Tuple[List[Commit], List[str]]:
+    """Collect commits from every repo, returning (commits, warnings).
+
+    Repositories are scanned in parallel on a thread pool limited to
+    *workers* concurrent ``git log`` processes — by default at most
+    ``_GIT_MAX_WORKERS``, scaled to the CPU count. *progress*, if given, is
+    called with (completed, total) after each repository finishes.
+    """
     commits: List[Commit] = []
     warnings: List[str] = []
-    for repo in repos:
-        try:
-            commits.extend(iter_commits(repo))
-        except (RuntimeError, subprocess.SubprocessError) as exc:
-            warnings.append(f"{repo}: {exc}")
+    total = len(repos)
+    if not total:
+        return commits, warnings
+    limit = workers or min(_GIT_MAX_WORKERS, (os.cpu_count() or 4) + 4)
+    limit = max(1, min(limit, total))
+    with ThreadPoolExecutor(max_workers=limit) as pool:
+        futures = {
+            pool.submit(_read_repo, repo, author, count_lines): repo
+            for repo in repos
+        }
+        for done, future in enumerate(as_completed(futures), 1):
+            try:
+                commits.extend(future.result())
+            except (RuntimeError, subprocess.SubprocessError) as exc:
+                warnings.append(f"{futures[future]}: {exc}")
+            if progress:
+                progress(done, total)
+    warnings.sort()
     return commits, warnings

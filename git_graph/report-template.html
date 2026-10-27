@@ -411,14 +411,16 @@ function describe(commits) {
   const [topRepo, topRepoCount] = topEntry(byRepo);
   const [topAuthor, topAuthorCount] = topEntry(byAuthor);
   const timestamps = commits.map(commit => commit.time);
+  const linesPhrase = DATA.countLines
+    ? `, changing ${formatNumber(added + deleted)} ` +
+      `${added + deleted === 1 ? "line" : "lines"} ` +
+      `(+${formatNumber(added)} / -${formatNumber(deleted)})`
+    : "";
   target.textContent =
     `${plural(commits.length, "commit")} by ${plural(authors.size, "author")} ` +
     `across ${plural(repos.size, "repository", "repositories")} ` +
     `between ${formatDate(Math.min(...timestamps))} ` +
-    `and ${formatDate(Math.max(...timestamps))}, ` +
-    `changing ${formatNumber(added + deleted)} ` +
-    `${added + deleted === 1 ? "line" : "lines"} ` +
-    `(+${formatNumber(added)} / -${formatNumber(deleted)}). ` +
+    `and ${formatDate(Math.max(...timestamps))}${linesPhrase}. ` +
     `Most active repository: ${DATA.repos[topRepo]} ` +
     `(${plural(topRepoCount, "commit")}). ` +
     `Top author: ${topAuthor} (${plural(topAuthorCount, "commit")}).`;
@@ -442,11 +444,12 @@ function refresh() {
   describe(commits);
 }
 
-const baseName = DATA.root.split(/[\\/]/).filter(Boolean).pop() || "root";
-document.title = `${baseName.replace(/:$/, "")} - Git Graph`;
+const baseNames = DATA.roots.map(root =>
+  (root.split(/[\\/]/).filter(Boolean).pop() || "root").replace(/:$/, ""));
+document.title = `${baseNames.join(", ")} - Git Graph`;
 
 control("summary").textContent =
-  `Scanned ${DATA.root} · Generated ${DATA.generated}`;
+  `Scanned ${DATA.roots.join(", ")} · Generated ${DATA.generated}`;
 
 const yearSelect = control("year");
 const years = [...new Set(
@@ -457,6 +460,12 @@ for (const year of years) {
   option.value = String(year);
   option.textContent = String(year);
   yearSelect.appendChild(option);
+}
+
+if (!DATA.countLines) {
+  const metricSelect = control("metric");
+  metricSelect.disabled = true;
+  metricSelect.title = "Line counts were not collected (--fast)";
 }
 
 for (const id of ["res", "stack", "metric", "year"])

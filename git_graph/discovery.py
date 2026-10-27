@@ -2,22 +2,43 @@
 
 import os
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterable, Iterator, Optional
 
 
-def find_repositories(root: Path, max_depth: Optional[int] = None) -> Iterator[Path]:
-    """Yield every directory containing a git repository beneath *root*.
+def _is_bare_repo(path: Path) -> bool:
+    """Bare repositories have HEAD/objects/refs but no .git entry."""
+    return (
+        (path / "HEAD").is_file()
+        and (path / "objects").is_dir()
+        and (path / "refs").is_dir()
+    )
 
-    A repository is any directory containing a ``.git`` entry — either a
-    directory (normal repo) or a file (worktrees and submodules). Search
-    continues inside found repositories so nested repos are reported, but
-    ``.git`` internals are never descended into.
+
+def find_repositories(roots: Iterable[Path],
+                      max_depth: Optional[int] = None) -> Iterator[Path]:
+    """Yield every directory containing a git repository beneath *roots*.
+
+    A repository is either a directory containing a ``.git`` entry — a
+    directory (normal repo) or a file (worktrees and submodules) — or a bare
+    repository, identified by ``HEAD``, ``objects`` and ``refs`` at its top
+    level. Search continues inside found repositories so nested repos are
+    reported, but ``.git`` internals are never descended into. Directories are
+    visited once each, identified by device/inode, so junctions and symlinked
+    directories can neither be scanned twice nor cause infinite loops.
     """
-    root = Path(root).resolve()
-    stack = [(root, 0)]
+    seen = set()
+    stack = [(Path(root).resolve(), 0) for root in roots]
     while stack:
         path, depth = stack.pop()
-        if (path / ".git").exists():
+        try:
+            stat = path.stat()
+            key = (stat.st_dev, stat.st_ino)
+        except OSError:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        if (path / ".git").exists() or _is_bare_repo(path):
             yield path
         if max_depth is not None and depth >= max_depth:
             continue
