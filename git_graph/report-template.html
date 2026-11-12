@@ -34,7 +34,7 @@
   .details li { margin: .1rem 0; }
   .details li i { width: .7rem; height: .7rem; border-radius: 2px;
                   display: inline-block; margin-right: .35rem; }
-  .details .hint { color: #999; font-style: italic; }
+  .details .hint { color: #999; font-style: italic; font-weight: normal; }
   .details .muted { color: #999; }
   .empty { color: #888; font-style: italic; padding: 2rem; text-align: center; }
 </style>
@@ -322,14 +322,20 @@ function commitSubList(row, names) {
   return list;
 }
 
-function showDetails(details, row, series, metric, isBar) {
+function showDetails(details, row, series, metric, isBar, pinned) {
   details.innerHTML = "";
   const head = document.createElement("div");
   head.className = isBar ? "details-head" : "hint";
   head.textContent = isBar
     ? `${row.label}: ${row.total.toLocaleString()} ` +
       (metric === "lines" ? "lines changed" : "commits")
-    : "Hover over a bar to filter this list";
+    : "Hover over a bar to filter this list; click to pin";
+  if (isBar) {
+    const note = document.createElement("span");
+    note.className = "hint";
+    note.textContent = pinned ? " (pinned; click the bar again to unpin)" : " (click to pin)";
+    head.appendChild(note);
+  }
   details.appendChild(head);
   const list = document.createElement("ul");
   series.forEach((name, index) => {
@@ -419,15 +425,29 @@ function render(resolution, stackBy, metric, commits, showYear,
   svg.appendChild(svgEl("line", {
     x1: margin.left, x2: width - margin.right, y1: axisY, y2: axisY,
     stroke: "#999" }));
-  const showSummary = () => showDetails(details, summary, series, metric, false);
-  svg.addEventListener("mousemove", event => {
+  let pinnedStart = null;
+  const barIndexAt = event => {
     const bounds = svg.getBoundingClientRect();
     const graphX = (event.clientX - bounds.left) * width / bounds.width;
-    const barIndex = Math.min(rows.length - 1, Math.max(0,
+    return Math.min(rows.length - 1, Math.max(0,
       Math.floor((graphX - margin.left) * rows.length / plotWidth)));
-    showDetails(details, rows[barIndex], series, metric, true);
+  };
+  const showIdle = () => {
+    const pinned = pinnedStart === null ? null
+      : rows.find(row => row.start === pinnedStart);
+    if (pinned)
+      showDetails(details, pinned, series, metric, true, true);
+    else
+      showDetails(details, summary, series, metric, false);
+  };
+  svg.addEventListener("mousemove", event =>
+    showDetails(details, rows[barIndexAt(event)], series, metric, true));
+  svg.addEventListener("click", event => {
+    const row = rows[barIndexAt(event)];
+    pinnedStart = pinnedStart === row.start ? null : row.start;
+    showIdle();
   });
-  svg.addEventListener("mouseleave", showSummary);
+  svg.addEventListener("mouseleave", showIdle);
   host.appendChild(svg);
   series.forEach((name, index) => {
     const item = document.createElement("span");
