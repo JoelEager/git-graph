@@ -7,7 +7,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from git_graph.commits import Commit
 
@@ -33,7 +33,8 @@ def _commit_entry(commit: Commit, details: bool):
 
 
 def _payload(commits: List[Commit], repos: List[Path], roots: List[Path],
-             count_lines: bool, details: bool = False):
+             count_lines: bool, details: bool = False,
+             flags: Optional[List[str]] = None):
     resolved = [str(path.resolve()) for path in repos]
     index = {path: i for i, path in enumerate(resolved)}
     names = [Path(path).name for path in resolved]
@@ -48,6 +49,7 @@ def _payload(commits: List[Commit], repos: List[Path], roots: List[Path],
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "countLines": count_lines,
         "details": details,
+        "flags": flags or [],
         "repos": display,
         "commits": [
             {
@@ -61,8 +63,10 @@ def _payload(commits: List[Commit], repos: List[Path], roots: List[Path],
 
 def build_html(commits: List[Commit], repos: List[Path],
                roots: List[Path], count_lines: bool = True,
-               details: bool = False) -> str:
-    data = json.dumps(_payload(commits, repos, roots, count_lines, details),
+               details: bool = False,
+               flags: Optional[List[str]] = None) -> str:
+    data = json.dumps(_payload(commits, repos, roots, count_lines, details,
+                               flags),
                       separators=(",", ":"))
     # Keep names containing "</script>" or "<!--" from breaking the page.
     data = (data.replace("&", "\\u0026")
@@ -73,12 +77,14 @@ def build_html(commits: List[Commit], repos: List[Path],
 
 def build_json(commits: List[Commit], repos: List[Path],
                roots: List[Path], count_lines: bool = True,
-               details: bool = False) -> str:
+               details: bool = False,
+               flags: Optional[List[str]] = None) -> str:
     payload = {
         "roots": [str(root) for root in roots],
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "countLines": count_lines,
         "details": details,
+        "flags": flags or [],
         "repos": [str(path.resolve()) for path in repos],
         "commits": [
             {"repo": commit.repo, **_commit_entry(commit, details)}

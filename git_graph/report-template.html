@@ -506,7 +506,9 @@ const baseNames = DATA.roots.map(root =>
 document.title = `${baseNames.join(", ")} - Git Graph`;
 
 control("summary").textContent =
-  `Scanned ${DATA.roots.join(", ")} · Generated ${DATA.generated}`;
+  `Scanned ${DATA.roots.join(", ")}` +
+  (DATA.flags && DATA.flags.length ? ` · ${DATA.flags.join(" · ")}` : "") +
+  ` · Generated ${DATA.generated}`;
 
 const yearSelect = control("year");
 if (DATA.details) {

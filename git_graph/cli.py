@@ -122,14 +122,26 @@ def main(argv=None) -> int:
         print(f"Warning: {warning}", file=sys.stderr)
     status(f"Collected {len(commits)} commits")
 
+    flags = []
+    if args.author:
+        flags.append(f"Author: {args.author}")
+    if args.email:
+        flags.append("Grouped by author email")
+    if args.fast:
+        flags.append("Line counts skipped")
+    if args.details:
+        flags.append("Commit details, past year only")
+    if args.max_depth is not None:
+        flags.append(f"Max depth {args.max_depth}")
+
     if args.format == "json":
         text = build_json(commits, repos, roots, count_lines=count_lines,
-                          details=args.details)
+                          details=args.details, flags=flags)
     elif args.format == "csv":
         text = build_csv(commits)
     else:
         text = build_html(commits, repos, roots, count_lines=count_lines,
-                          details=args.details)
+                          details=args.details, flags=flags)
 
     output = args.output
     if output is None and args.format == "html":
