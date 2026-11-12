@@ -17,11 +17,12 @@ pip install -e .
 
 ```sh
 git-graph [dirs...]            # Scan directories (default: cwd) and open report
+git-graph . --details          # Include commit messages (past year only)
+git-graph . -o report.html     # Save the report to a specific file
+git-graph . --fast             # Skip line counts for a quicker scan
 git-graph . --max-depth 2      # Limit search depth
 git-graph . --author Joel      # Only commits whose author name/email matches
 git-graph . --email            # Group commits by author email, not name
-git-graph . --fast             # Skip line counts for a quicker scan
-git-graph . -o report.html     # Save the report to a specific file
 ```
 
 Use `--help` for a full list of options.

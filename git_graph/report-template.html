@@ -45,6 +45,7 @@
 <div class="controls">
   <span><label for="res">Resolution</label>
     <select id="res">
+      <option value="day">Day</option>
       <option value="week">Week</option>
       <option value="month" selected>Month</option>
       <option value="year">Year</option>
@@ -59,7 +60,7 @@
       <option value="repo" selected>Repo</option>
       <option value="author">Author</option>
     </select></span>
-  <span><label for="year">Year</label>
+  <span><label id="yearLabel" for="year">Year</label>
     <select id="year">
       <option value="all" selected>All</option>
     </select></span>
@@ -98,6 +99,9 @@ function bucketStart(seconds, resolution) {
     return new Date(date.getFullYear(), 0, 1).getTime() / 1000;
   if (resolution === "month")
     return new Date(date.getFullYear(), date.getMonth(), 1).getTime() / 1000;
+  if (resolution === "day")
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate())
+      .getTime() / 1000;
   const day = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   day.setDate(day.getDate() - ((day.getDay() + 6) % 7)); // ISO week starts Monday
   return day.getTime() / 1000;
@@ -109,6 +113,9 @@ function nextBucket(seconds, resolution) {
     return new Date(date.getFullYear() + 1, 0, 1).getTime() / 1000;
   if (resolution === "month")
     return new Date(date.getFullYear(), date.getMonth() + 1, 1).getTime() / 1000;
+  if (resolution === "day")
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1)
+      .getTime() / 1000;
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 7)
     .getTime() / 1000;
 }
@@ -118,6 +125,7 @@ function bucketLabel(seconds, resolution) {
   if (resolution === "year") return String(date.getFullYear());
   if (resolution === "month")
     return date.getFullYear() + "-" + pad(date.getMonth() + 1);
+  if (resolution === "day") return formatDate(seconds);
   return date.getFullYear() + "-" + pad(date.getMonth() + 1) +
          "-" + pad(date.getDate());
 }
@@ -132,8 +140,11 @@ function tickLabel(seconds, resolution, showYear) {
   if (resolution === "month")
     return MONTHS[date.getMonth()] +
       (showYear || date.getMonth() === 0 ? yearSuffix : "");
-  return MONTHS[date.getMonth()] + " " + date.getDate() +
-         (showYear ? yearSuffix : "");
+  if (resolution === "week" || resolution === "day")
+    return MONTHS[date.getMonth()] + " " + date.getDate() +
+           (showYear ? yearSuffix : "");
+  return date.getFullYear() + "-" + pad(date.getMonth() + 1) +
+         "-" + pad(date.getDate());
 }
 
 function monthLabel(seconds) {
@@ -159,11 +170,12 @@ function metricValue(commit, metric) {
   return metric === "lines" ? commit.added + commit.deleted : 1;
 }
 
-function aggregate(resolution, stackBy, metric, commits, showYear) {
+function aggregate(resolution, stackBy, metric, commits, showYear, details) {
   const buckets = new Map();   // bucket seconds -> Map<series name, value>
   const totals = new Map();    // series name -> total
   const cross = new Map();     // `${bucket}|${name}` -> Map<other-dim name, value>
   const crossTotals = new Map(); // series name -> Map<other-dim name, value>
+  const detailBuckets = new Map(); // bucket -> Map<series name, commit list>
   let minTime = Infinity, maxTime = -Infinity;
   for (const commit of commits) {
     const name = seriesKey(commit, stackBy);
@@ -181,6 +193,14 @@ function aggregate(resolution, stackBy, metric, commits, showYear) {
     if (!crossTotals.has(name)) crossTotals.set(name, new Map());
     const totalValues = crossTotals.get(name);
     totalValues.set(other, (totalValues.get(other) || 0) + value);
+    if (details) {
+      if (!detailBuckets.has(bucket)) detailBuckets.set(bucket, new Map());
+      const detailValues = detailBuckets.get(bucket);
+      if (!detailValues.has(name)) detailValues.set(name, []);
+      detailValues.get(name).push({
+        m: commit.subject, t: commit.time, au: commit.author,
+        a: commit.added, d: commit.deleted });
+    }
     if (commit.time < minTime) minTime = commit.time;
     if (commit.time > maxTime) maxTime = commit.time;
   }
@@ -217,6 +237,9 @@ function aggregate(resolution, stackBy, metric, commits, showYear) {
                       : bucketLabel(bucket, resolution),
                   tick: tickLabel(bucket, resolution, showYear), cells,
                   cross: crossBySeries,
+                  detail: details
+                    ? (detailBuckets.get(bucket) || new Map())
+                    : null,
                   other: series.includes("Other")
                     ? sortDesc([...bucketValues]
                         .filter(([name]) => !series.includes(name)))
@@ -277,6 +300,28 @@ function mutedSpan(breakdown) {
   return span;
 }
 
+function commitSubList(row, names) {
+  if (!row.detail) return null;
+  const commits = [];
+  for (const name of names) {
+    const list = row.detail.get(name);
+    if (list) commits.push(...list);
+  }
+  if (!commits.length) return null;
+  commits.sort((a, b) => b.t - a.t);
+  const list = document.createElement("ul");
+  for (const commit of commits) {
+    const item = document.createElement("li");
+    item.textContent =
+      `${commit.au}: ${commit.m || "(no subject)"}`;
+    if (DATA.countLines)
+      item.textContent +=
+        ` (+${formatNumber(commit.a)} / -${formatNumber(commit.d)})`;
+    list.appendChild(item);
+  }
+  return list;
+}
+
 function showDetails(details, row, series, metric, isBar) {
   details.innerHTML = "";
   const head = document.createElement("div");
@@ -298,6 +343,8 @@ function showDetails(details, row, series, metric, isBar) {
       document.createTextNode(`${name}: ${value.toLocaleString()}`));
     const breakdown = row.cross.get(name);
     if (breakdown && breakdown.length) item.appendChild(mutedSpan(breakdown));
+    const commitList = commitSubList(row, [name]);
+    if (commitList) item.appendChild(commitList);
     if (name === "Other" && row.other) {
       const subList = document.createElement("ul");
       for (const [otherName, count] of row.other) {
@@ -307,6 +354,8 @@ function showDetails(details, row, series, metric, isBar) {
         const subBreakdown = row.cross.get(otherName);
         if (subBreakdown && subBreakdown.length)
           subItem.appendChild(mutedSpan(subBreakdown));
+        const subCommits = commitSubList(row, [otherName]);
+        if (subCommits) subItem.appendChild(subCommits);
         subList.appendChild(subItem);
       }
       item.appendChild(subList);
@@ -316,9 +365,11 @@ function showDetails(details, row, series, metric, isBar) {
   details.appendChild(list);
 }
 
-function render(resolution, stackBy, metric, commits, showYear) {
+function render(resolution, stackBy, metric, commits, showYear,
+                commitDetails) {
   const { series, rows, summary } =
-    aggregate(resolution, stackBy, metric, commits, showYear);
+    aggregate(resolution, stackBy, metric, commits, showYear,
+              commitDetails);
   const host = control("chart");
   const legend = control("legend");
   const details = control("details");
@@ -427,9 +478,14 @@ function describe(commits) {
 }
 
 function selectedCommits() {
-  const year = control("year").value;
-  if (year === "all") return DATA.commits;
-  const yearNumber = Number(year);
+  const period = control("year").value;
+  if (period === "all") return DATA.commits;
+  if (DATA.details)
+    return DATA.commits.filter(commit => {
+      const date = new Date(commit.time * 1000);
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}` === period;
+    });
+  const yearNumber = Number(period);
   return DATA.commits.filter(
     commit => new Date(commit.time * 1000).getFullYear() === yearNumber);
 }
@@ -440,7 +496,8 @@ function refresh() {
          control("stack").value,
          control("metric").value,
          commits,
-         control("year").value === "all");
+         control("year").value === "all",
+         DATA.details);
   describe(commits);
 }
 
@@ -452,14 +509,41 @@ control("summary").textContent =
   `Scanned ${DATA.roots.join(", ")} · Generated ${DATA.generated}`;
 
 const yearSelect = control("year");
-const years = [...new Set(
-    DATA.commits.map(commit => new Date(commit.time * 1000).getFullYear()))]
-  .sort((a, b) => b - a);
-for (const year of years) {
-  const option = document.createElement("option");
-  option.value = String(year);
-  option.textContent = String(year);
-  yearSelect.appendChild(option);
+if (DATA.details) {
+  control("yearLabel").textContent = "Month";
+  const months = new Map();
+  for (const commit of DATA.commits) {
+    const date = new Date(commit.time * 1000);
+    const value = `${date.getFullYear()}-${pad(date.getMonth() + 1)}`;
+    if (!months.has(value))
+      months.set(value, MONTHS[date.getMonth()] + " '" +
+                 String(date.getFullYear()).slice(2));
+  }
+  for (const value of [...months.keys()].sort().reverse()) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = months.get(value);
+    yearSelect.appendChild(option);
+  }
+} else {
+  const years = [...new Set(
+      DATA.commits.map(commit => new Date(commit.time * 1000).getFullYear()))]
+    .sort((a, b) => b - a);
+  for (const year of years) {
+    const option = document.createElement("option");
+    option.value = String(year);
+    option.textContent = String(year);
+    yearSelect.appendChild(option);
+  }
+}
+
+const resolutionSelect = control("res");
+if (DATA.details) resolutionSelect.value = "week";
+for (const [value, keep] of [["day", DATA.details], ["year", !DATA.details]]) {
+  if (!keep) {
+    const option = resolutionSelect.querySelector(`option[value="${value}"]`);
+    if (option) option.remove();
+  }
 }
 
 if (!DATA.countLines) {

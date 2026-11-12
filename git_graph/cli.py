@@ -29,6 +29,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                         help="group commits by author email instead of name")
     parser.add_argument("--fast", action="store_true",
                         help="skip per-commit line counts for a faster scan")
+    parser.add_argument("-d", "--details", action="store_true",
+                        help="limit to the past year and show individual "
+                             "commit messages in the report")
     parser.add_argument("--workers", type=int, default=None, metavar="N",
                         help="scan at most N repositories in parallel "
                              "(default: up to 32, scaled to CPU count)")
@@ -107,9 +110,12 @@ def main(argv=None) -> int:
     else:
         status("Collecting commits...")
 
+    count_lines = not args.fast
     commits, warnings = collect(
-        repos, author=args.author, count_lines=not args.fast,
-        workers=args.workers, use_email=args.email, progress=progress)
+        repos, author=args.author, count_lines=count_lines,
+        workers=args.workers, use_email=args.email,
+        since="1 year ago" if args.details else None,
+        progress=progress)
     if progress:
         print(file=sys.stderr)
     for warning in warnings:
@@ -117,11 +123,13 @@ def main(argv=None) -> int:
     status(f"Collected {len(commits)} commits")
 
     if args.format == "json":
-        text = build_json(commits, repos, roots, count_lines=not args.fast)
+        text = build_json(commits, repos, roots, count_lines=count_lines,
+                          details=args.details)
     elif args.format == "csv":
         text = build_csv(commits)
     else:
-        text = build_html(commits, repos, roots, count_lines=not args.fast)
+        text = build_html(commits, repos, roots, count_lines=count_lines,
+                          details=args.details)
 
     output = args.output
     if output is None and args.format == "html":

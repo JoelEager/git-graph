@@ -20,8 +20,20 @@ def _template() -> str:
     )
 
 
+def _commit_entry(commit: Commit, details: bool):
+    entry = {
+        "author": commit.author,
+        "time": round(commit.timestamp),
+        "added": commit.added,
+        "deleted": commit.deleted,
+    }
+    if details:
+        entry["subject"] = commit.subject
+    return entry
+
+
 def _payload(commits: List[Commit], repos: List[Path], roots: List[Path],
-             count_lines: bool):
+             count_lines: bool, details: bool = False):
     resolved = [str(path.resolve()) for path in repos]
     index = {path: i for i, path in enumerate(resolved)}
     names = [Path(path).name for path in resolved]
@@ -35,14 +47,12 @@ def _payload(commits: List[Commit], repos: List[Path], roots: List[Path],
         "roots": [str(root) for root in roots],
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "countLines": count_lines,
+        "details": details,
         "repos": display,
         "commits": [
             {
                 "repo": index[commit.repo],
-                "author": commit.author,
-                "time": round(commit.timestamp),
-                "added": commit.added,
-                "deleted": commit.deleted,
+                **_commit_entry(commit, details),
             }
             for commit in commits
         ],
@@ -50,8 +60,9 @@ def _payload(commits: List[Commit], repos: List[Path], roots: List[Path],
 
 
 def build_html(commits: List[Commit], repos: List[Path],
-               roots: List[Path], count_lines: bool = True) -> str:
-    data = json.dumps(_payload(commits, repos, roots, count_lines),
+               roots: List[Path], count_lines: bool = True,
+               details: bool = False) -> str:
+    data = json.dumps(_payload(commits, repos, roots, count_lines, details),
                       separators=(",", ":"))
     # Keep names containing "</script>" or "<!--" from breaking the page.
     data = (data.replace("&", "\\u0026")
@@ -61,20 +72,16 @@ def build_html(commits: List[Commit], repos: List[Path],
 
 
 def build_json(commits: List[Commit], repos: List[Path],
-               roots: List[Path], count_lines: bool = True) -> str:
+               roots: List[Path], count_lines: bool = True,
+               details: bool = False) -> str:
     payload = {
         "roots": [str(root) for root in roots],
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "countLines": count_lines,
+        "details": details,
         "repos": [str(path.resolve()) for path in repos],
         "commits": [
-            {
-                "repo": commit.repo,
-                "author": commit.author,
-                "time": round(commit.timestamp),
-                "added": commit.added,
-                "deleted": commit.deleted,
-            }
+            {"repo": commit.repo, **_commit_entry(commit, details)}
             for commit in commits
         ],
     }
